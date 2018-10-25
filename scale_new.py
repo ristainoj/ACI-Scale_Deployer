@@ -271,13 +271,15 @@ if __name__ == "__main__":
                              sys.exit()
                         else: print "Successfully mapped domain %s to EPG %s%s" %(phyDom, EPG, x)
                         if stPath is not None:
-                            stPathData = {"fvRsPathAtt":{"attributes":{"encap":"vlan-%s" %str(x),"instrImedcy":"immediate",\
-                                          "tDn":"%s" %stPath,"status":"created"},"children":[]}}
-                            resp = session.push_to_apic(epgUrl, stPathData)
-                            if resp is None or not resp.ok:
-                                 print "failed to POST Static Path %s to EPG %s%s" %(stPath, EPG, x)
-                                 sys.exit()
-                            else: print "Successfully mapped Static Path %s to EPG %s%s" %(stPath, EPG, x)
+                            stPaths = stPath.split(",")
+                            for path in stPaths:
+                                stPathData = {"fvRsPathAtt":{"attributes":{"encap":"vlan-%s" %str(x),"instrImedcy":"immediate",\
+                                              "tDn":"%s" %path,"status":"created"},"children":[]}}
+                                resp = session.push_to_apic(epgUrl, stPathData)
+                                if resp is None or not resp.ok:
+                                     print "failed to POST Static Path %s to EPG %s%s" %(path, EPG, x)
+                                     sys.exit()
+                                else: print "Successfully mapped Static Path %s to EPG %s%s" %(path, EPG, x)
 
                     if vmmDom is not None:
                         vmmDomData = {"fvRsDomAtt":{"attributes":{"resImedcy":"immediate",\
