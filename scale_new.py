@@ -102,7 +102,7 @@ def check_if_exists(tenant, ap, objectClass, object):
 
             if objectClass == "fvAEPg":
                 r1 = re.search(epgReg, dn)
-                if (r1.group("tenant") == tenant and r1.group("ap") == ap and r1.group("epg") == object):
+                if (r1.group("tenant") == tenant and r1.group("ap") == ap and r1.group("epg") in object):
                     return True
             if objectClass == "fvCtx":
                 r1 = re.search(vrfReg, dn)
@@ -110,10 +110,22 @@ def check_if_exists(tenant, ap, objectClass, object):
                     return True
             if objectClass == "fvBD":
                 r1 = re.search(bdReg, dn)
-                if (r1.group("tenant") == tenant and r1.group("bd") == object):
+                if (r1.group("tenant") == tenant and r1.group("bd") in object):
                     return True
     return False
 
+def check_subnet(subnet):
+    octet_regex = "(?P<first_octet>[0-9]+)\.(?P<second_octet>[0-9]+)\.(?P<third_octet>[0-9]+)\.(?P<fourth_octet>[0-9]+)"
+    r1 = re.search(octet_regex, subnet)
+    if r1 is not None:
+        first_octet = r1.group("first_octet")
+        second_octet = r1.group("second_octet")
+        third_octet = r1.group("third_octet")
+        fourth_octet = r1.group("fourth_octet")
+        return int(first_octet), int(second_octet), int(third_octet), int(fourth_octet)
+    else:
+        logging.error("Subnet is an Invalid Format!")
+        sys.exit()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -134,6 +146,7 @@ if __name__ == "__main__":
     parser.add_argument("--startVal", action="store", help="startVal", dest="startVal", default=None)
     parser.add_argument("--iterations", action="store", help="iterations", dest="iterations", default=None)
     parser.add_argument("--delete", action="store_true", help="delete the config", dest="delete", default=None)
+    parser.add_argument("--subnet", action="store", help="/24 Subnet to map to BD", dest="subnet", default=None)
     args = parser.parse_args()
 
     tenant     = args.tenant
@@ -144,6 +157,7 @@ if __name__ == "__main__":
     phyDom     = args.phydom
     vmmDom     = args.vmmdom
     stPath     = args.stpath
+    subnet     = args.subnet
     START      = int(args.startVal)
     ITERATIONS = int(args.iterations)
 
@@ -165,16 +179,37 @@ if __name__ == "__main__":
     if args.debug == "WARN": logger.setLevel(logging.WARN)
     if args.debug == "ERROR": logger.setLevel(logging.ERROR)
 
+    fir, sec, thir, four = check_subnet(subnet)
 
     #Create Session Object
     session = env_setup(args.ip, args.username, args.password, args.https, args.port)
 
     if not args.delete:
-        tenant_created = check_if_exists(args.tenant, args.ap, "fvTenant", args.tenant)
-        ap_created = check_if_exists(args.tenant, args.ap, "fvAp", args.ap)
-        epg_created = check_if_exists(args.tenant, args.ap, "fvAEPg", args.epg)
-        vrf_created = check_if_exists(args.tenant, args.ap, "fvCtx", args.vrf)
-        bd_created = check_if_exists(args.tenant, args.ap, "fvBD", args.bd)
+        if tenant is not None:
+            tenant_created = check_if_exists(args.tenant, args.ap, "fvTenant", args.tenant)
+        else:
+            logging.error("Please Provide a Tenant!")
+            sys.exit()
+        if appProfile is not None:
+            ap_created = check_if_exists(args.tenant, args.ap, "fvAp", args.ap)
+        else:
+            logging.error("Please Provide an Application Profile!")
+            sys.exit()
+        if EPG is not None:
+            epg_created = check_if_exists(args.tenant, args.ap, "fvAEPg", args.epg)
+        else:
+            logging.error("Please Provide an EPG!")
+            sys.exit()
+        if VRF is not None:
+            vrf_created = check_if_exists(args.tenant, args.ap, "fvCtx", args.vrf)
+        else:
+            logging.error("Please Provide a VRF!")
+            sys.exit()
+        if BD is not None:
+            bd_created = check_if_exists(args.tenant, args.ap, "fvBD", args.bd)
+        else:
+            logging.error("Please Provide a BD!")
+            sys.exit()
 
         if not tenant_created:
             tenantUrl = "/api/node/mo/uni/tn-%s.json" % tenant
@@ -243,9 +278,25 @@ if __name__ == "__main__":
                           "status":"created,modified"}}}]}}
                 resp = session.push_to_apic(bdUrl, bdData)
                 if resp is None or not resp.ok:
-                    print "failed to POST BD %s in Tenant %s" %(BD, tenant)
+                    print "failed to POST BD %s%s in Tenant %s" %(BD, x, tenant)
                     sys.exit()
                 else: print "Successfully created BD %s%s in Tenant %s" %(BD, x, tenant)
+                if subnet is not None:
+                    if thir == 256:
+                        thir = 0
+                        sec += 1
+                    subnet = "%s.%s.%s.%s" % (str(fir),str(sec),str(thir),str(four))
+                    subnetUrl = "/api/node/mo/uni/tn-%s/BD-VLAN%s/subnet-[%s/24].json" % (tenant, str(x), subnet)
+                    subnetData = {"fvSubnet":{"attributes":{"dn":"uni/tn-%s/BD-VLAN%s/subnet-[%s/24]" % (tenant, \
+                                  str(x), subnet), "ctrl":"","ip":"%s/24" %subnet, "rn":"subnet-[%s/24]" %subnet, \
+                                  "status":"created"}}}
+                    resp = session.push_to_apic(subnetUrl, subnetData)
+                    if resp is None or not resp.ok:
+                        print "failed to POST Subnet %s to BD %s%s" %(subnet, BD, x)
+                        sys.exit()
+                    else: print "Successfully created Subnet %s in BD %s%s" %(subnet, BD, x)
+
+                    thir += 1
 
                 #Push EPG to APIC
                 if EPG is not None:
@@ -291,13 +342,15 @@ if __name__ == "__main__":
                         else: print "Successfully mapped VMM Domain %s to EPG %s%s" %(vmmDom, EPG, x)
         elif args.delete:
             if BD is not None:
-                bdUrl = "/api/node/mo/uni/tn-%s/BD-VLAN%s.json" % (tenant, str(x))
-                bdData = {"fvBD":{"attributes":{"dn":"uni/tn-%s/BD-VLAN%s" % (tenant, str(x)),"name":"VLAN%s" % str(x) ,\
-                          "arpFlood":"yes", "unkMacUcastAct":"flood","unicastRoute":"false","rn":"BD-VLAN%s" % str(x),\
-                          "status":"deleted"}}}
-                resp = session.push_to_apic(bdUrl, bdData)
-                if resp is None or not resp.ok:
-                    print "failed to DELETE BD %s in Tenant %s" %(BD, tenant)
-                    sys.exit()
-                else: print "Successfully Deleted BD %s%s in Tenant %s" %(BD, x, tenant)
+                bd_created = check_if_exists(args.tenant, args.ap, "fvBD", "BD-%s%s" %(BD, str(x)))
+                if bd_created:
+                    bdUrl = "/api/node/mo/uni/tn-%s/BD-VLAN%s.json" % (tenant, str(x))
+                    bdData = {"fvBD":{"attributes":{"dn":"uni/tn-%s/BD-VLAN%s" % (tenant, str(x)),"name":"VLAN%s" % str(x) ,\
+                              "arpFlood":"yes", "unkMacUcastAct":"flood","unicastRoute":"false","rn":"BD-VLAN%s" % str(x),\
+                              "status":"deleted"}}}
+                    resp = session.push_to_apic(bdUrl, bdData)
+                    if resp is None or not resp.ok:
+                        print "failed to DELETE BD %s in Tenant %s" %(BD, tenant)
+                        sys.exit()
+                    else: print "Successfully Deleted BD %s%s in Tenant %s" %(BD, x, tenant)
 
