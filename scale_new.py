@@ -74,6 +74,19 @@ def env_setup(ip, usr, pwd, https, port):
 
     return session
 
+def getBdList():
+    url = "/api/node/class/fvBD.json"
+    resp = session.get(url)
+    json = resp.json()
+
+    bds = []
+    count = json['totalCount']
+    for i in range(0, int(count)):
+        name = json["imdata"][i]["fvBD"]["attributes"]["name"]
+        bds.append(name)
+    return bds
+
+
 def check_if_exists(tenant, ap, objectClass, object):
 
     tenantReg = "uni\/tn-(?P<tenant>.*)"
@@ -129,7 +142,7 @@ def check_subnet(subnet):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", action="store", help="debug level", dest="debug", default="ERROR")
+    parser.add_argument("--debug", action="store", help="debug level", dest="debug", default="INFO")
     parser.add_argument("--ip", action="store", dest="ip",help="APIC URL", default=None)
     parser.add_argument("--username", action="store", dest="username",help="admin username", default="admin")
     parser.add_argument("--password", action="store", dest="password",help="admin password", default=None)
@@ -179,7 +192,7 @@ if __name__ == "__main__":
     if args.debug == "WARN": logger.setLevel(logging.WARN)
     if args.debug == "ERROR": logger.setLevel(logging.ERROR)
 
-    fir, sec, thir, four = check_subnet(subnet)
+    if subnet: fir, sec, thir, four = check_subnet(subnet)
 
     #Create Session Object
     session = env_setup(args.ip, args.username, args.password, args.https, args.port)
@@ -216,24 +229,24 @@ if __name__ == "__main__":
             tenantData = {"fvTenant":{"attributes":{"name":"%s" % tenant ,"status":"created"}}}
             resp = session.push_to_apic(tenantUrl, tenantData)
             if resp is None or not resp.ok:
-                print "failed to POST Tenant Config %s" %tenant
+                logger.error("failed to POST Tenant Config %s" %tenant)
                 #return None
                 sys.exit()
-            else: print "Successfully created Tenant %s" %tenant
+            else: logger.info("Successfully created Tenant %s" %tenant)
         else:
-            print "Tenant %s already exists, skipping creation..." %tenant
+            logger.error("Tenant %s already exists, skipping creation..." %tenant)
 
         if not ap_created:
             apUrl = "/api/node/mo/uni/tn-%s/ap-%s.json" % (tenant, appProfile)
             apData = {"fvAp":{"attributes":{"name":"%s" % appProfile ,"status":"created"}}}
             resp = session.push_to_apic(apUrl, apData)
             if resp is None or not resp.ok:
-                print "failed to POST Application Profile Config %s" %appProfile
+                logger.error("failed to POST Application Profile Config %s" %appProfile)
                 #return None
                 sys.exit()
-            else: print "Successfully created Application Profile %s in Tenant %s" %(appProfile, tenant)
+            else: logger.info("Successfully created Application Profile %s in Tenant %s" %(appProfile, tenant))
         else:
-            print "Application Profile %s in Tenant %s already exists, Please Use a New One!" %(appProfile, tenant)
+            logger.error("Application Profile %s in Tenant %s already exists, Please Use a New One!" %(appProfile, tenant))
             sys.exit()
 
         if not vrf_created:
@@ -241,29 +254,32 @@ if __name__ == "__main__":
             vrfData = {"fvCtx":{"attributes":{"name":"%s" % VRF ,"status":"created"}}}
             resp = session.push_to_apic(vrfUrl, vrfData)
             if resp is None or not resp.ok:
-                print "failed to POST VRF Config %s" %VRF
+                logger.error("failed to POST VRF Config %s" %VRF)
                 sys.exit()
-            else: print "Successfully created VRF %s in Tenant %s" %(VRF, tenant)
+            else: logger.info("Successfully created VRF %s in Tenant %s" %(VRF, tenant))
         else:
-            print "VRF %s in Tenant %s already exists, Please Use a New One!" %(VRF, tenant)
+            logger.error("VRF %s in Tenant %s already exists, Please Use a New One!" %(VRF, tenant))
             sys.exit()
     elif args.delete:
         apUrl = "/api/node/mo/uni/tn-%s/ap-%s.json" % (tenant, appProfile)
         apData = {"fvAp":{"attributes":{"name":"%s" % appProfile ,"status":"deleted"}}}
         resp = session.push_to_apic(apUrl, apData)
         if resp is None or not resp.ok:
-            print "failed to DELETE Application Profile Config %s" %appProfile
+            logger.error("failed to DELETE Application Profile Config %s" %appProfile)
             #return None
             sys.exit()
-        else: print "Successfully Deleted Application Profile %s in Tenant %s" %(appProfile, tenant)
+        else: logger.info("Successfully Deleted Application Profile %s in Tenant %s" %(appProfile, tenant))
 
         vrfUrl = "/api/node/mo/uni/tn-%s/ctx-%s.json" % (tenant, VRF)
         vrfData = {"fvCtx":{"attributes":{"name":"%s" % VRF ,"status":"deleted"}}}
         resp = session.push_to_apic(vrfUrl, vrfData)
         if resp is None or not resp.ok:
-            print "failed to Delete VRF Config %s" %VRF
+            logger.error("failed to Delete VRF Config %s" %VRF)
             sys.exit()
-        else: print "Successfully Deleted VRF %s in Tenant %s" %(VRF, tenant)
+        else: logger.info("Successfully Deleted VRF %s in Tenant %s" %(VRF, tenant))
+
+        # Get List of BD's to check if the BD exists before attempting to delete it
+        bds = getBdList()
 
 
 
@@ -271,20 +287,22 @@ if __name__ == "__main__":
         if not args.delete:
             #Push BD to APIC
             if BD is not None:
-                bdUrl = "/api/node/mo/uni/tn-%s/BD-VLAN%s.json" % (tenant, str(x))
-                bdData = {"fvBD":{"attributes":{"dn":"uni/tn-%s/BD-VLAN%s" % (tenant, str(x)),"name":"VLAN%s" % str(x) ,\
-                          "arpFlood":"yes", "unkMacUcastAct":"flood","unicastRoute":"false","rn":"BD-VLAN%s" % str(x),\
-                          "status":"created"},"children":[{"fvRsCtx":{"attributes":{"tnFvCtxName":"%s" %VRF,\
-                          "status":"created,modified"}}}]}}
-                resp = session.push_to_apic(bdUrl, bdData)
-                if resp is None or not resp.ok:
-                    print "failed to POST BD %s%s in Tenant %s" %(BD, x, tenant)
-                    sys.exit()
-                else: print "Successfully created BD %s%s in Tenant %s" %(BD, x, tenant)
                 if subnet is not None:
+                    bdUrl = "/api/node/mo/uni/tn-%s/BD-VLAN%s.json" % (tenant, str(x))
+                    bdData = {"fvBD":{"attributes":{"dn":"uni/tn-%s/BD-VLAN%s" % (tenant, str(x)),"name":"VLAN%s" % str(x) ,\
+                              "arpFlood":"yes", "unkMacUcastAct":"flood","unicastRoute":"true","rn":"BD-VLAN%s" % str(x),\
+                              "status":"created"},"children":[{"fvRsCtx":{"attributes":{"tnFvCtxName":"%s" %VRF,\
+                              "status":"created,modified"}}}]}}
+                    resp = session.push_to_apic(bdUrl, bdData)
+                    if resp is None or not resp.ok:
+                        logger.error("failed to POST BD %s%s in Tenant %s" %(BD, x, tenant))
+                        sys.exit()
+                    else: logger.info("Successfully created BD %s%s in Tenant %s" %(BD, x, tenant))
+
                     if thir == 256:
                         thir = 0
                         sec += 1
+
                     subnet = "%s.%s.%s.%s" % (str(fir),str(sec),str(thir),str(four))
                     subnetUrl = "/api/node/mo/uni/tn-%s/BD-VLAN%s/subnet-[%s/24].json" % (tenant, str(x), subnet)
                     subnetData = {"fvSubnet":{"attributes":{"dn":"uni/tn-%s/BD-VLAN%s/subnet-[%s/24]" % (tenant, \
@@ -292,11 +310,24 @@ if __name__ == "__main__":
                                   "status":"created"}}}
                     resp = session.push_to_apic(subnetUrl, subnetData)
                     if resp is None or not resp.ok:
-                        print "failed to POST Subnet %s to BD %s%s" %(subnet, BD, x)
+                        logger.error("failed to POST Subnet %s to BD %s%s" %(subnet, BD, x))
                         sys.exit()
-                    else: print "Successfully created Subnet %s in BD %s%s" %(subnet, BD, x)
+                    else: logger.info("Successfully created Subnet %s in BD %s%s" %(subnet, BD, x))
 
                     thir += 1
+
+                else:
+                    bdUrl = "/api/node/mo/uni/tn-%s/BD-VLAN%s.json" % (tenant, str(x))
+                    bdData = {"fvBD":{"attributes":{"dn":"uni/tn-%s/BD-VLAN%s" % (tenant, str(x)),"name":"VLAN%s" % str(x) ,\
+                              "arpFlood":"yes", "unkMacUcastAct":"flood","unicastRoute":"false","rn":"BD-VLAN%s" % str(x),\
+                              "status":"created"},"children":[{"fvRsCtx":{"attributes":{"tnFvCtxName":"%s" %VRF,\
+                              "status":"created,modified"}}}]}}
+                    resp = session.push_to_apic(bdUrl, bdData)
+                    if resp is None or not resp.ok:
+                        logger.error("failed to POST BD %s%s in Tenant %s" %(BD, x, tenant))
+                        sys.exit()
+                    else: logger.info("Successfully created BD %s%s in Tenant %s" %(BD, x, tenant))
+
 
                 #Push EPG to APIC
                 if EPG is not None:
@@ -307,10 +338,10 @@ if __name__ == "__main__":
                                "status":"created,modified"},"children":[]}}]}}
                     resp = session.push_to_apic(epgUrl, epgData)
                     if resp is None or not resp.ok:
-                        print "failed to POST EPG %s%s in Tenant %s / Application Profile %s" %(EPG, x, tenant, appProfile)
+                        logger.error("failed to POST EPG %s%s in Tenant %s / Application Profile %s" %(EPG, x, tenant, appProfile))
                         sys.exit()
-                    else: print "Successfully created EPG %s%s in Tenant: %s / Application Profile: %s" \
-                                %(EPG, x, tenant, appProfile)
+                    else: logger.info("Successfully created EPG %s%s in Tenant: %s / Application Profile: %s" \
+                                %(EPG, x, tenant, appProfile))
 
                     #Associate Domains to EPG
                     if phyDom is not None:
@@ -318,9 +349,9 @@ if __name__ == "__main__":
                                    "resImedcy":"immediate","status":"created"},"children":[]}}
                         resp = session.push_to_apic(epgUrl, phydomData)
                         if resp is None or not resp.ok:
-                             print "failed to POST Domain %s to EPG %s%s" %(phyDom, EPG, x)
+                             logger.error("failed to POST Domain %s to EPG %s%s" %(phyDom, EPG, x))
                              sys.exit()
-                        else: print "Successfully mapped domain %s to EPG %s%s" %(phyDom, EPG, x)
+                        else: logger.info("Successfully mapped domain %s to EPG %s%s" %(phyDom, EPG, x))
                         if stPath is not None:
                             stPaths = stPath.split(",")
                             for path in stPaths:
@@ -328,29 +359,29 @@ if __name__ == "__main__":
                                               "tDn":"%s" %path,"status":"created"},"children":[]}}
                                 resp = session.push_to_apic(epgUrl, stPathData)
                                 if resp is None or not resp.ok:
-                                     print "failed to POST Static Path %s to EPG %s%s" %(path, EPG, x)
+                                     logger.error("failed to POST Static Path %s to EPG %s%s" %(path, EPG, x))
                                      sys.exit()
-                                else: print "Successfully mapped Static Path %s to EPG %s%s" %(path, EPG, x)
+                                else: logger.info("Successfully mapped Static Path %s to EPG %s%s" %(path, EPG, x))
 
                     if vmmDom is not None:
                         vmmDomData = {"fvRsDomAtt":{"attributes":{"resImedcy":"immediate",\
                                       "tDn":"uni/vmmp-VMware/dom-%s" %vmmDom,"instrImedcy":"immediate","status":"created"}}}
                         resp = session.push_to_apic(epgUrl, vmmDomData)
                         if resp is None or not resp.ok:
-                             print "failed to POST VMM Domain %s to EPG %s%s" %(vmmDom, EPG, x)
+                             logger.error("failed to POST VMM Domain %s to EPG %s%s" %(vmmDom, EPG, x))
                              sys.exit()
-                        else: print "Successfully mapped VMM Domain %s to EPG %s%s" %(vmmDom, EPG, x)
+                        else: logger.info("Successfully mapped VMM Domain %s to EPG %s%s" %(vmmDom, EPG, x))
         elif args.delete:
             if BD is not None:
-                bd_created = check_if_exists(args.tenant, args.ap, "fvBD", "BD-%s%s" %(BD, str(x)))
-                if bd_created:
+                bd = "VLAN%s" %str(x)
+                if bd in bds:
                     bdUrl = "/api/node/mo/uni/tn-%s/BD-VLAN%s.json" % (tenant, str(x))
                     bdData = {"fvBD":{"attributes":{"dn":"uni/tn-%s/BD-VLAN%s" % (tenant, str(x)),"name":"VLAN%s" % str(x) ,\
                               "arpFlood":"yes", "unkMacUcastAct":"flood","unicastRoute":"false","rn":"BD-VLAN%s" % str(x),\
                               "status":"deleted"}}}
                     resp = session.push_to_apic(bdUrl, bdData)
                     if resp is None or not resp.ok:
-                        print "failed to DELETE BD %s in Tenant %s" %(BD, tenant)
+                        logger.error("failed to DELETE BD %s in Tenant %s" %(BD, tenant))
                         sys.exit()
-                    else: print "Successfully Deleted BD %s%s in Tenant %s" %(BD, x, tenant)
+                    else: logger.info("Successfully Deleted BD %s%s in Tenant %s" %(BD, x, tenant))
 
