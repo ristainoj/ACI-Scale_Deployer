@@ -160,6 +160,8 @@ if __name__ == "__main__":
     parser.add_argument("--iterations", action="store", help="iterations", dest="iterations", default=None)
     parser.add_argument("--delete", action="store_true", help="delete the config", dest="delete", default=None)
     parser.add_argument("--subnet", action="store", help="/24 Subnet to map to BD", dest="subnet", default=None)
+    parser.add_argument("--provider", action="store", help="Provider Contract to be deployed", dest="provider", default=None)
+    parser.add_argument("--consumer", action="store", help="Consumer Contract to be deployed", dest="consumer", default=None)
     args = parser.parse_args()
 
     tenant     = args.tenant
@@ -173,6 +175,8 @@ if __name__ == "__main__":
     subnet     = args.subnet
     START      = int(args.startVal)
     ITERATIONS = int(args.iterations)
+    provider   = args.provider
+    consumer   = args.consumer
 
     # configure logging
     logger = logging.getLogger("")
@@ -343,6 +347,24 @@ if __name__ == "__main__":
                     else: logger.info("Successfully created EPG %s%s in Tenant: %s / Application Profile: %s" \
                                 %(EPG, x, tenant, appProfile))
 
+                    #Associate Provider Contract to EPG
+                    provUrl = "/api/node/mo/uni/tn-%s/ap-%s/epg-VLAN%s.json" % (tenant, appProfile, str(x))
+                    provData = {"fvRsProv":{"attributes":{"tnVzBrCPName":"%s"%provider,"status":"created,modified"},"children":[]}}
+                    resp = session.push_to_apic(provUrl, provData)
+                    if resp is None or not resp.ok:
+                        logger.error("failed to POST Provider Contract %s for EPG %s%s / Application Profile %s" %(provider, tenant, EPG, x))
+                        sys.exit()
+                    else: logger.info("Successfully created Provider Contract %s in EPG %s%s:" %(provider, EPG, x))
+
+                    #Associate Consumer Contract to EPG
+                    consUrl = "/api/node/mo/uni/tn-%s/ap-%s/epg-VLAN%s.json" % (tenant, appProfile, str(x))
+                    consData = {"fvRsCons":{"attributes":{"tnVzBrCPName":"%s"%consumer,"status":"created,modified"},"children":[]}}
+                    resp = session.push_to_apic(consUrl, consData)
+                    if resp is None or not resp.ok:
+                        logger.error("failed to POST Consumer Contract %s for EPG %s%s / Application Profile %s" %(consumer, tenant, EPG, x))
+                        sys.exit()
+                    else: logger.info("Successfully created Consumer Contract %s in EPG %s%s:" %(consumer, EPG, x))
+
                     #Associate Domains to EPG
                     if phyDom is not None:
                         phydomData = {"fvRsDomAtt":{"attributes":{"tDn":"uni/phys-%s" % phyDom,"instrImedcy":"immediate",\
@@ -364,13 +386,15 @@ if __name__ == "__main__":
                                 else: logger.info("Successfully mapped Static Path %s to EPG %s%s" %(path, EPG, x))
 
                     if vmmDom is not None:
-                        vmmDomData = {"fvRsDomAtt":{"attributes":{"resImedcy":"immediate",\
-                                      "tDn":"uni/vmmp-VMware/dom-%s" %vmmDom,"instrImedcy":"immediate","status":"created"}}}
-                        resp = session.push_to_apic(epgUrl, vmmDomData)
-                        if resp is None or not resp.ok:
-                             logger.error("failed to POST VMM Domain %s to EPG %s%s" %(vmmDom, EPG, x))
-                             sys.exit()
-                        else: logger.info("Successfully mapped VMM Domain %s to EPG %s%s" %(vmmDom, EPG, x))
+                        vmmDoms = vmmDom.split(",")
+                        for dom in vmmDoms:
+                            vmmDomData = {"fvRsDomAtt":{"attributes":{"resImedcy":"pre-provision",\
+                                          "tDn":"uni/vmmp-VMware/dom-%s" %dom,"instrImedcy":"immediate","status":"created"}}}
+                            resp = session.push_to_apic(epgUrl, vmmDomData)
+                            if resp is None or not resp.ok:
+                                 logger.error("failed to POST VMM Domain %s to EPG %s%s" %(dom, EPG, x))
+                                 sys.exit()
+                            else: logger.info("Successfully mapped VMM Domain %s to EPG %s%s" %(dom, EPG, x))
         elif args.delete:
             if BD is not None:
                 bd = "VLAN%s" %str(x)
